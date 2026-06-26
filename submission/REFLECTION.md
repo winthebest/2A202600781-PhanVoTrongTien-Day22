@@ -1,9 +1,9 @@
 # Reflection — Lab 22 (DPO/ORPO Alignment)
 
-**Tên:** _<Họ Tên>_
-**Cohort:** _<A20-K1 / A20-K2 / ...>_
-**Tier đã chạy:** _<T4 | BIGGPU | both>_
-**Date:** _<YYYY-MM-DD>_
+**Tên:** _<Phan Võ Trọng Tiển>_
+**Cohort:** _<2A202600781>_
+**Tier đã chạy:** T4
+**Date:** 2026-06-26
 
 ---
 
@@ -11,13 +11,15 @@
 
 | Item | Value |
 |---|---|
-| GPU | _<e.g., Free Colab T4 16GB / RTX 4060 8GB / A100 40GB>_ |
-| CUDA / driver | _<e.g., CUDA 12.1, driver 535>_ |
-| Base model | _<e.g., unsloth/Qwen2.5-3B-bnb-4bit>_ |
-| SFT dataset slice | _<e.g., 5CD-AI/Vietnamese-alpaca-cleaned · 1000 samples · 1 epoch>_ |
-| Preference dataset slice | _<e.g., argilla/ultrafeedback-binarized-preferences-cleaned · 2000 pairs · 1 epoch>_ |
-| `COMPUTE_TIER` env | _<T4 | BIGGPU>_ |
-| Total cost | _<e.g., $0 (free Colab) / $1.20 (Colab Pro A100 30 min)>_ |
+| GPU | Free Kaggle/Colab **Tesla T4 16GB** (15.6 GB usable) |
+| CUDA / driver | CUDA 12.x (T4 / Turing, fp16 — bf16 not supported) |
+| Base model | `unsloth/Qwen2.5-3B-bnb-4bit` (4-bit, 3.12B params) |
+| SFT dataset slice | Vietnamese-Alpaca · 1000 samples · 1 epoch (125 steps) |
+| Preference dataset slice | UltraFeedback (binarized, English baseline) · 2000 pairs · 1 epoch (250 steps) |
+| `COMPUTE_TIER` env | T4 |
+| Total cost | $0 (free tier) |
+
+LoRA: r=16, alpha=32 → trainable 29,933,568 / 3,115,872,256 params (0.96%).
 
 ---
 
@@ -25,96 +27,65 @@
 
 | Metric | SFT-only baseline | SFT + DPO |
 |---|---:|---:|
-| Training time (NB3) | — | _<e.g., 28 min>_ |
-| VRAM peak | _<e.g., 10.4 GB>_ | _<e.g., 13.8 GB>_ |
-| Final loss | _<e.g., 1.82 (SFT)>_ | _<e.g., 0.48 (DPO)>_ |
-| Reward gap (chosen − rejected, end of training) | n/a | _<e.g., 1.34>_ |
-| Mean output length | _<e.g., 142 tokens>_ | _<e.g., 87 tokens (-39%)>_ |
+| Training time (NB3) | — | _<điền: phút từ output train>_ |
+| VRAM peak | _<~10 GB>_ | _<~13–14 GB (ref model doubles VRAM)>_ |
+| Final loss | 1.3425 (SFT-mini) | 1.6205 (DPO) |
+| Reward gap (chosen − rejected, end) | n/a | **−0.520** (chosen +1.179, rejected +1.699) |
+| Win-rate vs SFT (8 prompts, gpt-4o-mini judge) | 3/8 | **5/8** |
 
-**Tulu 3 reference numbers** (from deck §7.2b, for context only):
-- +1.7 MATH, +3.3 GSM8K, +1.3 IFEval (RLVR over DPO baseline on Llama-3-8B-Instruct)
-- 70B-class scale; do not expect to replicate at 3B / 7B.
+**Tulu 3 reference numbers** (deck §7.2b, context only):
+- +1.7 MATH, +3.3 GSM8K, +1.3 IFEval (RLVR over DPO, Llama-3-8B-Instruct, 70B-class). Không kỳ vọng tái lập ở 3B.
 
 ---
 
 ## 3. Reward curves analysis (≥ 100 words)
 
-> **Paste `03_dpo_reward_curves.png` here** (or link to it in `submission/screenshots/`).
+> Xem `submission/screenshots/03-dpo-reward-curves.png`.
 
-_Interpret both `chosen_rewards` and `rejected_rewards` separately. Did chosen go up, or did the gap grow because rejected dropped faster (likelihood displacement, deck §3.4)? What does this tell you about whether DPO did what you wanted? Reference the curve shape — flat for the first ~100 steps, then trending one way? KL divergence to reference at end?_
-
-_Answer here. ≥ 100 words._
+Cuối training: **chosen reward = +1.179**, **rejected reward = +1.699**, nên **gap = −0.520 (âm)**. Điểm mấu chốt khi đọc cả hai đường: đây **không phải likelihood displacement** theo deck §3.4 — likelihood displacement là khi *chosen reward GIẢM (đi âm)* trong khi gap vẫn nới ra. Ở đây chosen reward **dương và tăng** so với khởi điểm ~0; vấn đề là rejected reward tăng *nhanh hơn*. Nói cách khác, mô hình đẩy log-prob của **cả** chosen lẫn rejected lên, nhưng không tách được hai phân phối — margin không mở ra, thậm chí đảo dấu. Nguyên nhân khả dĩ: (1) tập preference là **UltraFeedback tiếng Anh** trong khi base đã SFT trên dữ liệu **tiếng Việt**, nên tín hiệu chosed/rejected không khớp domain; (2) β=0.1 có thể quá chặt/lỏng cho cặp dữ liệu này; (3) chỉ 1 epoch / 250 step — chưa đủ để margin tách. Điều thú vị: **dù gap training âm, win-rate downstream vẫn 5/8 nghiêng về DPO** (đặc biệt safety 3/1), cho thấy cải thiện hành vi xuất hiện ở generation ngay cả khi reward gap implicit chưa hội tụ — một disconnect đáng lưu ý giữa metric training và đánh giá thực tế.
 
 ---
 
 ## 4. Qualitative comparison (≥ 8 examples)
 
-> **Paste `04_side_by_side_table.png` here** (or summarize in markdown).
+> Xem `submission/screenshots/04-side-by-side-table.png`. Bảng đầy đủ 8 prompt × 2 model nằm trong NB4.
 
-| # | Prompt category | Prompt (truncated) | SFT-only | SFT+DPO | Winner |
-|---|---|---|---|---|---|
-| 1 | helpfulness | _<...>_ | _<...>_ | _<...>_ | _<SFT \| DPO \| tie>_ |
-| 2 | helpfulness | | | | |
-| 3 | helpfulness | | | | |
-| 4 | helpfulness | | | | |
-| 5 | safety | | | | |
-| 6 | safety | | | | |
-| 7 | safety | | | | |
-| 8 | safety | | | | |
+**Win/loss/tie summary:** SFT+DPO thắng **5/8**, SFT-only 3/8, tie 0/8.
+- Helpfulness: SFT 2/4 — DPO 2/4 (hòa)
+- Safety: SFT 1/4 — **DPO 3/4** (DPO cải thiện rõ ở mảng an toàn)
 
-**Win/loss/tie summary:** _<e.g., SFT+DPO wins 5/8, ties 2/8, loses 1/8>_
+**Judge used:** gpt-4o-mini (API judge, có OPENAI_API_KEY).
 
-**Judge used:** _<gpt-4o-mini | claude-haiku-4-5 | manual rubric>_
+_<Tùy chọn: chép 8 dòng prompt/category/winner từ bảng NB4 vào đây cho người chấm tiện đối chiếu.>_
 
 ---
 
 ## 5. β trade-off
 
-_If you ran the β-sweep bonus (rigor add-on +6), describe the result:_
-
-| β | Reward gap | Win-rate (8 prompts) | Output length | Notes |
-|---:|---:|---:|---:|---|
-| 0.05 | _<...>_ | _<...>_ | _<...>_ | |
-| 0.1 (default) | _<...>_ | _<...>_ | _<...>_ | |
-| 0.5 | _<...>_ | _<...>_ | _<...>_ | |
-
-_Interpret: where's the sweet spot for your data? Why? Does it match the deck's §3.3 prediction?_
-
-_If you did **not** run the sweep:_ predict what you'd expect to see and write a 3-sentence hypothesis. (No points lost — but the muscle of forming a hypothesis is the value.)
-
-_Answer here._
+Mình **không** chạy β-sweep (rigor add-on). Hypothesis dựa trên kết quả gap âm ở β=0.1:
+- **β nhỏ hơn (0.05):** ràng buộc KL lỏng hơn → policy được phép lệch xa reference hơn → kỳ vọng margin chosen−rejected mở rộng hơn, nhưng rủi ro reward hacking / output dài bất thường.
+- **β lớn hơn (0.5):** giữ sát reference → an toàn nhưng gần như không tách được chosen/rejected (gap còn nhỏ hơn). Với hiện tượng gap âm hiện tại, mình dự đoán **giảm β về 0.05** là hướng đáng thử nhất để cứu margin, khớp dự đoán deck §3.3 (β điều tiết đánh đổi giữa bám reference và tối ưu preference).
 
 ---
 
 ## 6. Personal reflection — single change that mattered most (≥ 150 words)
 
-> Pick **one** decision you made during this lab — choosing β, choosing the data slice, choosing the judge model, choosing T4 vs BigGPU — and walk through:
->
-> 1. What was the alternative you considered?
-> 2. Why did you pick the one you did?
-> 3. Did the result confirm or surprise you?
-> 4. If you redid the lab tomorrow, what would you change?
+> _Bản nháp — hãy đọc lại và viết bằng giọng của chính bạn trước khi nộp._
 
-_Answer here. ≥ 150 words._
+Quyết định đáng nói nhất của mình là **chọn dùng tập preference UltraFeedback tiếng Anh** thay vì tự build một tập preference tiếng Việt. Phương án thay thế là sinh cặp chosen/rejected tiếng Việt (như BONUS-CHALLENGE gợi ý), nhưng mình chọn UltraFeedback vì nó đã được binarize sẵn, sạch, và là baseline chuẩn của deck — tiết kiệm thời gian trên free T4. Kết quả **vừa xác nhận vừa làm mình bất ngờ**: reward gap training ra **âm (−0.520)**, đúng như rủi ro "lệch domain" mình lo (base SFT tiếng Việt vs preference tiếng Anh), nhưng bất ngờ là **win-rate downstream vẫn 5/8 nghiêng về DPO**, đặc biệt mảng safety 3/1. Điều này dạy mình rằng **reward gap implicit không phải thước đo duy nhất** — phải nhìn cả generation thực tế. Nếu làm lại ngày mai, mình sẽ: (1) build một slice preference **tiếng Việt nhỏ** để khớp domain với SFT, (2) chạy **β-sweep {0.05, 0.1, 0.5}** để xem margin có cứu được không, và (3) tăng lên 2 epoch. Mình kỳ vọng khớp domain sẽ là đòn bẩy lớn nhất để đưa gap về dương.
 
 ---
 
 ## 7. Benchmark interpretation (≥ 150 words)
 
-> **Paste `07-benchmark-comparison.png` here** (or link).
+Mình **không** chạy NB6 benchmark (add-on bonus, không bắt buộc cho core). Dưới đây là dự đoán định tính dựa trên kết quả NB3/NB4:
 
-Score table from `data/eval/benchmark_results.json`:
+- **IFEval:** kỳ vọng DPO **tăng nhẹ** — DPO tinh chỉnh instruction-following, và win-rate helpfulness/safety đã cải thiện.
+- **GSM8K / MATH:** rủi ro **alignment tax** (deck §8.1) — DPO trên preference chat có thể làm suy giảm khả năng suy luận toán; với gap âm và chỉ 1 epoch, mình dự đoán gần như **không đổi hoặc giảm rất nhẹ**.
+- **MMLU (sampled):** kỳ vọng **gần phẳng** — kiến thức factual nằm ở base weights, LoRA 0.96% params khó gây catastrophic forgetting trong 250 step.
+- **AlpacaEval-lite:** kỳ vọng **khớp xu hướng NB4** (DPO ~ 60%+ win-rate), vì cùng dùng judge LLM trên các prompt mở.
 
-| Benchmark | SFT-only | SFT+DPO | Δ |
-|---|---:|---:|---:|
-| IFEval | _<...>_ | _<...>_ | _<...>_ |
-| GSM8K | _<...>_ | _<...>_ | _<...>_ |
-| MMLU (sampled) | _<...>_ | _<...>_ | _<...>_ |
-| AlpacaEval-lite | _<...>_ | _<...>_ | _<...>_ |
-
-_Interpret the deltas. Which benchmark went up most? Did GSM8K or MATH regress (alignment tax — see deck §8.1)? Did MMLU stay flat (factual knowledge preserved) or drop (catastrophic forgetting)? Was AlpacaEval-lite win-rate consistent with NB4 judge results, or divergent? Which benchmark surprised you, and what does it tell you about whether DPO did the alignment work you wanted?_
-
-_Answer here. ≥ 150 words._
+Nếu chạy thật, điều mình tò mò nhất là liệu GSM8K có giảm không — đó sẽ là bằng chứng trực tiếp cho alignment tax mà gap-âm này gợi ý.
 
 ---
 
@@ -125,11 +96,11 @@ _Answer here. ≥ 150 words._
 - [ ] Đã release GGUF với multiple quantizations (+3)
 - [ ] Đã link W&B run public (+2)
 - [ ] Đã làm cross-judge comparison (+4)
-- [ ] Đã làm `BONUS-CHALLENGE.md` provocation (ungraded — link `bonus/` folder)
-- [ ] Pair work với: _<tên đồng đội nếu có>_
+- [ ] Đã làm `BONUS-CHALLENGE.md` provocation (ungraded)
+- [ ] Pair work với: —
 
 ---
 
 ## Điều ngạc nhiên nhất khi làm lab này
 
-_(Optional, 1–3 câu)_
+Reward gap training ra **âm** nhưng win-rate downstream vẫn nghiêng về DPO (5/8) — metric training và đánh giá thực tế không phải lúc nào cũng đồng pha.
